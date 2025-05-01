@@ -1,3 +1,9 @@
+```
+# Changes of the fork
+    - Added support for yolo-obb angle in the range [0:360]
+    - Change augment images background to white (255, 255, 255)
+```
+
 <div align="center">
   <p>
     <a href="https://www.ultralytics.com/blog/ultralytics-yolo11-has-arrived-redefine-whats-possible-in-ai" target="_blank">

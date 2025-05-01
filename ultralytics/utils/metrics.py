@@ -229,6 +229,13 @@ def probiou(obb1, obb2, CIoU=False, eps=1e-7):
     bd = (t1 + t2 + t3).clamp(eps, 100.0)
     hd = (1.0 - (-bd).exp() + eps).sqrt()
     iou = 1 - hd
+
+    # Angle penalty
+    angle1, angle2 = obb1[..., 4], obb2[..., 4]
+    delta_angle = angle1 - angle2
+    angle_penalty = (torch.cos(delta_angle) + 1) / 2
+    iou = iou * angle_penalty.unsqueeze(-1)
+
     if CIoU:  # only include the wh aspect ratio part
         w1, h1 = obb1[..., 2:4].split(1, dim=-1)
         w2, h2 = obb2[..., 2:4].split(1, dim=-1)

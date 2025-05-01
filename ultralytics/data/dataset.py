@@ -270,11 +270,14 @@ class YOLODataset(BaseDataset):
         # NOTE: do NOT resample oriented boxes
         segment_resamples = 100 if self.use_obb else 1000
         if len(segments) > 0:
-            # make sure segments interpolate correctly if original length is greater than segment_resamples
-            max_len = max(len(s) for s in segments)
-            segment_resamples = (max_len + 1) if segment_resamples < max_len else segment_resamples
-            # list[np.array(segment_resamples, 2)] * num_samples
-            segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
+            if not self.use_obb:
+                # make sure segments interpolate correctly if original length is greater than segment_resamples
+                max_len = max(len(s) for s in segments)
+                segment_resamples = (max_len + 1) if segment_resamples < max_len else segment_resamples
+                # list[np.array(segment_resamples, 2)] * num_samples
+                segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
+            else:
+                segments = np.stack(segments, axis=0)
         else:
             segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
         label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)

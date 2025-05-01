@@ -559,31 +559,36 @@ def ltwh2xywh(x):
 
 def xyxyxyxy2xywhr(x):
     """
-    Convert batched Oriented Bounding Boxes (OBB) from [xy1, xy2, xy3, xy4] to [xywh, rotation]. Rotation values are
-    returned in radians from 0 to pi/2.
-
-    Args:
-        x (numpy.ndarray | torch.Tensor): Input box corners [xy1, xy2, xy3, xy4] of shape (n, 8).
-
-    Returns:
-        (numpy.ndarray | torch.Tensor): Converted data in [cx, cy, w, h, rotation] format of shape (n, 5).
+    Convert OBB corners [xy1, xy2, xy3, xy4] to [cx, cy, w, h, rotation] with angles 0-360°.
     """
     is_torch = isinstance(x, torch.Tensor)
     points = x.cpu().numpy() if is_torch else x
-    points = points.reshape(len(x), -1, 2)
+    points = points.reshape(len(x), 4, 2)
     rboxes = []
+    
     for pts in points:
-        # NOTE: Use cv2.minAreaRect to get accurate xywhr,
-        # especially some objects are cut off by augmentations in dataloader.
-        (cx, cy), (w, h), angle = cv2.minAreaRect(pts)
-        rboxes.append([cx, cy, w, h, angle / 180 * np.pi])
+        pt0, pt1, pt2, pt3 = pts
+
+        edge_top = pt1 - pt0
+        edge_r = pt3 - pt0 
+        angle = np.arctan2(edge_r[1], edge_r[0])
+
+        angle = angle % (2 * np.pi)
+
+        width = np.linalg.norm(edge_top)
+        height = np.linalg.norm(pt0 - pt3)
+
+        cx, cy = np.mean(pts, axis=0)
+
+        rboxes.append([cx, cy, height, width, angle])
+    
     return torch.tensor(rboxes, device=x.device, dtype=x.dtype) if is_torch else np.asarray(rboxes)
 
 
 def xywhr2xyxyxyxy(x):
     """
     Convert batched Oriented Bounding Boxes (OBB) from [xywh, rotation] to [xy1, xy2, xy3, xy4]. Rotation values should
-    be in radians from 0 to pi/2.
+    be in radians from 0 to 2*pi.
 
     Args:
         x (numpy.ndarray | torch.Tensor): Boxes in [cx, cy, w, h, rotation] format of shape (n, 5) or (b, n, 5).
@@ -608,7 +613,7 @@ def xywhr2xyxyxyxy(x):
     pt2 = ctr + vec1 - vec2
     pt3 = ctr - vec1 - vec2
     pt4 = ctr - vec1 + vec2
-    return stack([pt1, pt2, pt3, pt4], -2)
+    return stack([pt4, pt1, pt2, pt3], -2)
 
 
 def ltwh2xyxy(x):
@@ -812,13 +817,14 @@ def regularize_rboxes(rboxes):
     Returns:
         (torch.Tensor): The regularized boxes.
     """
-    x, y, w, h, t = rboxes.unbind(dim=-1)
-    # Swap edge if t >= pi/2 while not being symmetrically opposite
-    swap = t % math.pi >= math.pi / 2
-    w_ = torch.where(swap, h, w)
-    h_ = torch.where(swap, w, h)
-    t = t % (math.pi / 2)
-    return torch.stack([x, y, w_, h_, t], dim=-1)  # regularized boxes
+    return rboxes
+    # x, y, w, h, t = rboxes.unbind(dim=-1)
+    # # Swap edge if t >= pi/2 while not being symmetrically opposite
+    # swap = t % math.pi >= math.pi / 2
+    # w_ = torch.where(swap, h, w)
+    # h_ = torch.where(swap, w, h)
+    # t = t % (math.pi / 2)
+    # return torch.stack([x, y, w_, h_, t], dim=-1)  # regularized boxes
 
 
 def masks2segments(masks, strategy="all"):
