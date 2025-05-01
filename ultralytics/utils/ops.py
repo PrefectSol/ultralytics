@@ -567,7 +567,7 @@ def xyxyxyxy2xywhr(x):
     rboxes = []
     
     for pts in points:
-        pt0, pt1, pt2, pt3 = pts
+        pt3, pt1, pt2, pt0 = pts
 
         edge_top = pt1 - pt0
         edge_r = pt3 - pt0 
@@ -613,7 +613,7 @@ def xywhr2xyxyxyxy(x):
     pt2 = ctr + vec1 - vec2
     pt3 = ctr - vec1 - vec2
     pt4 = ctr - vec1 + vec2
-    return stack([pt4, pt1, pt2, pt3], -2)
+    return stack([pt1, pt2, pt3, pt4], -2)
 
 
 def ltwh2xyxy(x):
