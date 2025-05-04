@@ -567,7 +567,7 @@ def xyxyxyxy2xywhr(x):
     rboxes = []
     
     for pts in points:
-        pt3, pt1, pt2, pt0 = pts
+        pt0, pt1, pt2, pt3 = pts
 
         edge_top = pt1 - pt0
         edge_r = pt3 - pt0 
