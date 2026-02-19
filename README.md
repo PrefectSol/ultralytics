@@ -1,3 +1,10 @@
+```
+# Changes of the fork
+    - (19 feb 2026) Global sync to ultralytics 8.4.14 (UPDATE FOR YOLO26). END2END angle not updated
+    - (4 may 2025) Added support for yolo-obb angle in the range [0:360]
+    - (4 may 2025) Change augment images background to white (255, 255, 255)
+```
+
 <div align="center">
   <p>
     <a href="https://platform.ultralytics.com/ultralytics/yolo26" target="_blank">
