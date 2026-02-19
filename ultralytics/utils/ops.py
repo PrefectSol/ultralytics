@@ -77,7 +77,7 @@ def segment2box(segment, width: int = 640, height: int = 640):
     inside-image constraint and clips coordinates when necessary.
 
     Args:
-        segment (np.ndarray): Segment coordinates in format (N, 2) where N is number of points.
+        segment (torch.Tensor): Segment coordinates in format (N, 2) where N is number of points.
         width (int): Width of the image in pixels.
         height (int): Height of the image in pixels.
 
@@ -251,7 +251,8 @@ def xywhn2xyxy(x, w: int = 640, h: int = 640, padw: int = 0, padh: int = 0):
         padh (int): Padding height in pixels.
 
     Returns:
-        (np.ndarray | torch.Tensor): Bounding box coordinates in (x1, y1, x2, y2) format.
+        y (np.ndarray | torch.Tensor): The coordinates of the bounding box in the format [x1, y1, x2, y2] where x1,y1 is
+            the top-left corner, x2,y2 is the bottom-right corner of the bounding box.
     """
     assert x.shape[-1] == 4, f"input shape last dimension expected 4 but input shape is {x.shape}"
     y = empty_like(x)  # faster than clone/copy
@@ -265,7 +266,7 @@ def xywhn2xyxy(x, w: int = 640, h: int = 640, padw: int = 0, padh: int = 0):
 
 
 def xyxy2xywhn(x, w: int = 640, h: int = 640, clip: bool = False, eps: float = 0.0):
-    """Convert bounding box coordinates from (x1, y1, x2, y2) format to normalized (x, y, width, height) format. x, y,
+    """Convert bounding box coordinates from (x1, y1, x2, y2) format to (x, y, width, height, normalized) format. x, y,
     width and height are normalized to image dimensions.
 
     Args:
@@ -335,46 +336,44 @@ def ltwh2xywh(x):
     return y
 
 
+
+
 def xyxyxyxy2xywhr(x):
-    """Convert batched Oriented Bounding Boxes (OBB) from [xy1, xy2, xy3, xy4] to [xywh, rotation] format.
-
-    Args:
-        x (np.ndarray | torch.Tensor): Input box corners with shape (N, 8) in [xy1, xy2, xy3, xy4] format.
-
-    Returns:
-        (np.ndarray | torch.Tensor): Converted data in [cx, cy, w, h, rotation] format with shape (N, 5). Rotation
-            values are in radians from [-pi/4, 3pi/4).
+    """
+    Convert OBB corners [xy1, xy2, xy3, xy4] to [cx, cy, w, h, rotation] with angles 0-360°.
     """
     is_torch = isinstance(x, torch.Tensor)
     points = x.cpu().numpy() if is_torch else x
-    points = points.reshape(len(x), -1, 2)
+    points = points.reshape(len(x), 4, 2)
     rboxes = []
+    
     for pts in points:
-        # NOTE: Use cv2.minAreaRect to get accurate xywhr,
-        # especially some objects are cut off by augmentations in dataloader.
-        (cx, cy), (w, h), angle = cv2.minAreaRect(pts)
-        # convert angle to radian and normalize to [-pi/4, 3pi/4)
-        theta = angle / 180 * np.pi
-        if w < h:
-            w, h = h, w
-            theta += np.pi / 2
-        while theta >= 3 * np.pi / 4:
-            theta -= np.pi
-        while theta < -np.pi / 4:
-            theta += np.pi
-        rboxes.append([cx, cy, w, h, theta])
+        pt0, pt1, pt2, pt3 = pts
+
+        edge_top = pt1 - pt0
+        edge_r = pt3 - pt0 
+        angle = np.arctan2(edge_r[1], edge_r[0])
+
+        width = np.linalg.norm(edge_top)
+        height = np.linalg.norm(pt0 - pt3)
+
+        cx, cy = np.mean(pts, axis=0)
+
+        rboxes.append([cx, cy, width, height, angle])
+    
     return torch.tensor(rboxes, device=x.device, dtype=x.dtype) if is_torch else np.asarray(rboxes)
 
 
 def xywhr2xyxyxyxy(x):
-    """Convert batched Oriented Bounding Boxes (OBB) from [xywh, rotation] to [xy1, xy2, xy3, xy4] format.
+    """
+    Convert batched Oriented Bounding Boxes (OBB) from [xywh, rotation] to [xy1, xy2, xy3, xy4]. Rotation values should
+    be in radians from 0 to 2*pi.
 
     Args:
-        x (np.ndarray | torch.Tensor): Boxes in [cx, cy, w, h, rotation] format with shape (N, 5) or (B, N, 5). Rotation
-            values should be in radians from [-pi/4, 3pi/4).
+        x (numpy.ndarray | torch.Tensor): Boxes in [cx, cy, w, h, rotation] format of shape (n, 5) or (b, n, 5).
 
     Returns:
-        (np.ndarray | torch.Tensor): Converted corner points with shape (N, 4, 2) or (B, N, 4, 2).
+        (numpy.ndarray | torch.Tensor): Converted corner points of shape (n, 4, 2) or (b, n, 4, 2).
     """
     cos, sin, cat, stack = (
         (torch.cos, torch.sin, torch.cat, torch.stack)
@@ -383,7 +382,7 @@ def xywhr2xyxyxyxy(x):
     )
 
     ctr = x[..., :2]
-    w, h, angle = (x[..., i : i + 1] for i in range(2, 5))
+    h, w, angle = (x[..., i : i + 1] for i in range(2, 5))
     cos_value, sin_value = cos(angle), sin(angle)
     vec1 = [w / 2 * cos_value, w / 2 * sin_value]
     vec2 = [-h / 2 * sin_value, h / 2 * cos_value]
@@ -394,6 +393,7 @@ def xywhr2xyxyxyxy(x):
     pt3 = ctr - vec1 - vec2
     pt4 = ctr - vec1 + vec2
     return stack([pt1, pt2, pt3, pt4], -2)
+
 
 
 def ltwh2xyxy(x):
@@ -412,7 +412,7 @@ def ltwh2xyxy(x):
 
 
 def segments2boxes(segments):
-    """Convert segment coordinates to bounding box labels in xywh format.
+    """Convert segment labels to box labels, i.e. (cls, xy1, xy2, ...) to (cls, xywh).
 
     Args:
         segments (list): List of segments where each segment is a list of points, each point is [x, y] coordinates.
@@ -455,7 +455,7 @@ def crop_mask(masks: torch.Tensor, boxes: torch.Tensor) -> torch.Tensor:
 
     Args:
         masks (torch.Tensor): Masks with shape (N, H, W).
-        boxes (torch.Tensor): Bounding box coordinates with shape (N, 4) in xyxy pixel format.
+        boxes (torch.Tensor): Bounding box coordinates with shape (N, 4) in relative point form.
 
     Returns:
         (torch.Tensor): Cropped masks.
@@ -534,7 +534,7 @@ def scale_masks(
     Args:
         masks (torch.Tensor): Masks with shape (N, C, H, W).
         shape (tuple[int, int]): Target height and width as (height, width).
-        ratio_pad (tuple, optional): Ratio and padding values as ((ratio_h, ratio_w), (pad_w, pad_h)).
+        ratio_pad (tuple, optional): Ratio and padding values as ((ratio_h, ratio_w), (pad_h, pad_w)).
         padding (bool): Whether masks are based on YOLO-style augmented images with padding.
 
     Returns:
@@ -566,7 +566,7 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None, normalize: bool
         img1_shape (tuple): Source image shape as HWC or HW (supports both).
         coords (torch.Tensor): Coordinates to scale with shape (N, 2).
         img0_shape (tuple): Image 0 shape as HWC or HW (supports both).
-        ratio_pad (tuple, optional): Ratio and padding values as ((ratio_h, ratio_w), (pad_w, pad_h)).
+        ratio_pad (tuple, optional): Ratio and padding values as ((ratio_h, ratio_w), (pad_h, pad_w)).
         normalize (bool): Whether to normalize coordinates to range [0, 1].
         padding (bool): Whether coordinates are based on YOLO-style augmented images with padding.
 
@@ -595,7 +595,7 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None, normalize: bool
 
 
 def regularize_rboxes(rboxes):
-    """Regularize rotated bounding boxes to range [0, pi/2).
+    """Regularize rotated bounding boxes to range [0, pi/2].
 
     Args:
         rboxes (torch.Tensor): Input rotated boxes with shape (N, 5) in xywhr format.
@@ -616,7 +616,7 @@ def masks2segments(masks: np.ndarray | torch.Tensor, strategy: str = "all") -> l
     """Convert masks to segments using contour detection.
 
     Args:
-        masks (np.ndarray | torch.Tensor): Binary masks with shape (N, H, W).
+        masks (np.ndarray | torch.Tensor): Binary masks with shape (batch_size, 160, 160).
         strategy (str): Segmentation strategy, either 'all' or 'largest'.
 
     Returns:
@@ -668,5 +668,5 @@ def clean_str(s):
 
 
 def empty_like(x):
-    """Create empty torch.Tensor or np.ndarray with same shape and dtype as input."""
+    """Create empty torch.Tensor or np.ndarray with same shape as input and float32 dtype."""
     return torch.empty_like(x, dtype=x.dtype) if isinstance(x, torch.Tensor) else np.empty_like(x, dtype=x.dtype)

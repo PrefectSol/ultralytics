@@ -1341,7 +1341,7 @@ class SAM2VideoPredictor(SAM2Predictor):
             (dict): A dictionary containing the output of the tracking step, including updated features and predictions.
 
         Raises:
-            AssertionError: If both `point_inputs` and `mask_inputs` are provided simultaneously.
+            AssertionError: If both `point_inputs` and `mask_inputs` are provided, or neither is provided.
 
         Notes:
             - The method assumes that `point_inputs` and `mask_inputs` are mutually exclusive.
@@ -1892,9 +1892,9 @@ class SAM2DynamicInteractivePredictor(SAM2Predictor):
         specified overrides
 
         Args:
-            cfg (Any): Configuration dictionary containing default settings.
+            cfg (dict[str, Any]): Configuration dictionary containing default settings.
             overrides (dict[str, Any] | None): Dictionary of values to override default configuration.
-            max_obj_num (int): Maximum number of objects to track. Default is 3. This is set to keep fixed feature size
+            max_obj_num (int): Maximum number of objects to track. Default is 3. this is set to keep fix feature size
                 for the model.
             _callbacks (dict[str, Any] | None): Dictionary of callback functions to customize behavior.
         """
@@ -1930,9 +1930,10 @@ class SAM2DynamicInteractivePredictor(SAM2Predictor):
         Args:
             im (torch.Tensor | np.ndarray): The input image tensor or numpy array.
             bboxes (list[list[float]] | None): Optional list of bounding boxes to update the memory.
-            masks (torch.Tensor | np.ndarray | None): Optional masks to update the memory.
+            masks (list[torch.Tensor | np.ndarray] | None): Optional masks to update the memory.
             points (list[list[float]] | None): Optional list of points to update the memory, each point is [x, y].
-            labels (list[int] | None): Optional list of labels for point prompts (>0 for positive, 0 for negative).
+            labels (list[int] | None): Optional list of object IDs corresponding to the points (>0 for positive, 0 for
+                negative).
             obj_ids (list[int] | None): Optional list of object IDs corresponding to the prompts.
             update_memory (bool): Flag to indicate whether to update the memory with new objects.
 
@@ -2129,7 +2130,7 @@ class SAM2DynamicInteractivePredictor(SAM2Predictor):
             obj_id (int): The client-side object ID.
 
         Returns:
-            (int | None): The model-side object index, or None if not found.
+            (int): The model-side object index, or None if not found.
         """
         return self.obj_id_to_idx.get(obj_id, None)
 

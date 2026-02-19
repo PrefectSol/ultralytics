@@ -60,9 +60,9 @@ class YOLODataset(BaseDataset):
 
     Methods:
         cache_labels: Cache dataset labels, check images and read shapes.
-        get_labels: Return list of label dictionaries for YOLO training.
+        get_labels: Return dictionary of labels for YOLO training.
         build_transforms: Build and append transforms to the list.
-        close_mosaic: Disable mosaic, copy_paste, mixup and cutmix augmentations and build transformations.
+        close_mosaic: Set mosaic, copy_paste and mixup options to 0.0 and build transformations.
         update_labels_info: Update label format for different tasks.
         collate_fn: Collate data samples into batches.
 
@@ -155,7 +155,7 @@ class YOLODataset(BaseDataset):
         return x
 
     def get_labels(self) -> list[dict]:
-        """Return list of label dictionaries for YOLO training.
+        """Return dictionary of labels for YOLO training.
 
         This method loads labels from disk or cache, verifies their integrity, and prepares them for training.
 
@@ -268,11 +268,14 @@ class YOLODataset(BaseDataset):
         # NOTE: do NOT resample oriented boxes
         segment_resamples = 100 if self.use_obb else 1000
         if len(segments) > 0:
-            # make sure segments interpolate correctly if original length is greater than segment_resamples
-            max_len = max(len(s) for s in segments)
-            segment_resamples = (max_len + 1) if segment_resamples < max_len else segment_resamples
-            # list[np.array(segment_resamples, 2)] * num_samples
-            segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
+            if not self.use_obb:
+                # make sure segments interpolate correctly if original length is greater than segment_resamples
+                max_len = max(len(s) for s in segments)
+                segment_resamples = (max_len + 1) if segment_resamples < max_len else segment_resamples
+                # list[np.array(segment_resamples, 2)] * num_samples
+                segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
+            else:
+                segments = np.stack(segments, axis=0)
         else:
             segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
         label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)
@@ -379,7 +382,7 @@ class YOLOMultiModalDataset(YOLODataset):
         """Return category names for the dataset.
 
         Returns:
-            (set[str]): Set of class names.
+            (set[str]): List of class names.
         """
         names = self.data["names"].values()
         return {n.strip() for name in names for n in name.split("/")}  # category names
@@ -667,7 +670,7 @@ class YOLOConcatDataset(ConcatDataset):
         return YOLODataset.collate_fn(batch)
 
     def close_mosaic(self, hyp: dict) -> None:
-        """Disable mosaic, copy_paste, mixup and cutmix augmentations by setting their probabilities to 0.0.
+        """Set mosaic, copy_paste and mixup options to 0.0 and build transformations.
 
         Args:
             hyp (dict): Hyperparameters for transforms.
@@ -688,7 +691,7 @@ class SemanticDataset(BaseDataset):
 
 
 class ClassificationDataset:
-    """Dataset class for image classification tasks wrapping torchvision ImageFolder functionality.
+    """Dataset class for image classification tasks extending torchvision ImageFolder functionality.
 
     This class offers functionalities like image augmentation, caching, and verification. It's designed to efficiently
     handle large datasets for training deep learning models, with optional image transformations and caching mechanisms
@@ -697,14 +700,14 @@ class ClassificationDataset:
     Attributes:
         cache_ram (bool): Indicates if caching in RAM is enabled.
         cache_disk (bool): Indicates if caching on disk is enabled.
-        samples (list): A list of lists, each containing the path to an image, its class index, path to its .npy cache
+        samples (list): A list of tuples, each containing the path to an image, its class index, path to its .npy cache
             file (if caching on disk), and optionally the loaded image array (if caching in RAM).
         torch_transforms (callable): PyTorch transforms to be applied to the images.
         root (str): Root directory of the dataset.
         prefix (str): Prefix for logging and cache filenames.
 
     Methods:
-        __getitem__: Return transformed image and class index for the given sample index.
+        __getitem__: Return subset of data and targets corresponding to given indices.
         __len__: Return the total number of samples in the dataset.
         verify_images: Verify all images in dataset.
     """
@@ -761,7 +764,7 @@ class ClassificationDataset:
         )
 
     def __getitem__(self, i: int) -> dict:
-        """Return transformed image and class index for the given sample index.
+        """Return subset of data and targets corresponding to given indices.
 
         Args:
             i (int): Index of the sample to retrieve.
@@ -792,7 +795,7 @@ class ClassificationDataset:
         """Verify all images in dataset.
 
         Returns:
-            (list[tuple]): List of valid samples after verification.
+            (list): List of valid samples after verification.
         """
         desc = f"{self.prefix}Scanning {self.root}..."
         path = Path(self.root).with_suffix(".cache")  # *.cache file path

@@ -63,7 +63,8 @@ def get_center(x1: int, y1: int, x2: int, y2: int) -> tuple[int, int]:
         y2 (int): Bottom-right Y coordinate.
 
     Returns:
-        (tuple[int, int]): X and Y coordinates of the center point.
+        center_x (int): X-coordinate of the center point.
+        center_y (int): Y-coordinate of the center point.
     """
     return (x1 + x2) // 2, (y1 + y2) // 2
 
@@ -78,7 +79,8 @@ def extend_line_from_edge(mid_x: int, mid_y: int, direction: str, img_shape: tup
         img_shape (tuple[int, int, int]): Image shape in (height, width, channels).
 
     Returns:
-        (tuple[int, int]): X and Y coordinates of the endpoint.
+        end_x (int): X-coordinate of the endpoint.
+        end_y (int): Y-coordinate of the endpoint.
     """
     h, w = img_shape[:2]
     if direction == "down":

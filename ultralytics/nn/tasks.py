@@ -106,14 +106,14 @@ class BaseModel(torch.nn.Module):
     display, and weight loading capabilities.
 
     Attributes:
-        model (torch.nn.Sequential): The neural network model.
+        model (torch.nn.Module): The neural network model.
         save (list): List of layer indices to save outputs from.
         stride (torch.Tensor): Model stride values.
 
     Methods:
         forward: Perform forward pass for training or inference.
         predict: Perform inference on input tensor.
-        fuse: Fuse Conv/BatchNorm layers and reparameterize for optimization.
+        fuse: Fuse Conv2d and BatchNorm2d layers for optimization.
         info: Print model information.
         load: Load weights into the model.
         loss: Compute loss for training.
@@ -149,7 +149,7 @@ class BaseModel(torch.nn.Module):
             profile (bool): Print the computation time of each layer if True.
             visualize (bool): Save the feature maps of the model if True.
             augment (bool): Augment image during prediction.
-            embed (list, optional): A list of layer indices to return embeddings from.
+            embed (list, optional): A list of feature vectors/embeddings to return.
 
         Returns:
             (torch.Tensor): The last output of the model.
@@ -165,7 +165,7 @@ class BaseModel(torch.nn.Module):
             x (torch.Tensor): The input tensor to the model.
             profile (bool): Print the computation time of each layer if True.
             visualize (bool): Save the feature maps of the model if True.
-            embed (list, optional): A list of layer indices to return embeddings from.
+            embed (list, optional): A list of feature vectors/embeddings to return.
 
         Returns:
             (torch.Tensor): The last output of the model.
@@ -222,10 +222,8 @@ class BaseModel(torch.nn.Module):
             LOGGER.info(f"{sum(dt):10.2f} {'-':>10s} {'-':>10s}  Total")
 
     def fuse(self, verbose=True):
-        """Fuse Conv/ConvTranspose and BatchNorm layers, and reparameterize RepConv/RepVGGDW for improved efficiency.
-
-        Args:
-            verbose (bool): Whether to print model information after fusion.
+        """Fuse the `Conv2d()` and `BatchNorm2d()` layers of the model into a single layer for improved computation
+        efficiency.
 
         Returns:
             (torch.nn.Module): The fused model is returned.
@@ -255,13 +253,13 @@ class BaseModel(torch.nn.Module):
         return self
 
     def is_fused(self, thresh=10):
-        """Check if the model has less than a certain threshold of normalization layers.
+        """Check if the model has less than a certain threshold of BatchNorm layers.
 
         Args:
-            thresh (int, optional): The threshold number of normalization layers.
+            thresh (int, optional): The threshold number of BatchNorm layers.
 
         Returns:
-            (bool): True if the number of normalization layers in the model is less than the threshold, False otherwise.
+            (bool): True if the number of BatchNorm layers in the model is less than the threshold, False otherwise.
         """
         bn = tuple(v for k, v in torch.nn.__dict__.items() if "Norm" in k)  # normalization layers, i.e. BatchNorm2d()
         return sum(isinstance(v, bn) for v in self.modules()) < thresh  # True if < 'thresh' BatchNorm layers in model
@@ -272,12 +270,12 @@ class BaseModel(torch.nn.Module):
         Args:
             detailed (bool): If True, prints out detailed information about the model.
             verbose (bool): If True, prints out the model information.
-            imgsz (int): The size of the image used for computing model information.
+            imgsz (int): The size of the image that the model will be trained on.
         """
         return model_info(self, detailed=detailed, verbose=verbose, imgsz=imgsz)
 
     def _apply(self, fn):
-        """Apply a function to all tensors in the model, including Detect head attributes like stride and anchors.
+        """Apply a function to all tensors in the model that are not parameters or registered buffers.
 
         Args:
             fn (function): The function to apply to the model.
@@ -452,7 +450,7 @@ class DetectionModel(BaseModel):
             x (torch.Tensor): Input image tensor.
 
         Returns:
-            (tuple[torch.Tensor, None]): Augmented inference output and None for train output.
+            (torch.Tensor): Augmented inference output.
         """
         if getattr(self, "end2end", False) or self.__class__.__name__ != "DetectionModel":
             LOGGER.warning("Model does not support 'augment=True', reverting to single-scale prediction.")
@@ -475,7 +473,7 @@ class DetectionModel(BaseModel):
 
         Args:
             p (torch.Tensor): Predictions tensor.
-            flips (int | None): Flip type (None=none, 2=ud, 3=lr).
+            flips (int): Flip type (0=none, 2=ud, 3=lr).
             scale (float): Scale factor.
             img_size (tuple): Original image size (height, width).
             dim (int): Dimension to split at.
@@ -680,7 +678,7 @@ class ClassificationModel(BaseModel):
 
     @staticmethod
     def reshape_outputs(model, nc):
-        """Update a TorchVision classification model to class count 'nc' if required.
+        """Update a TorchVision classification model to class count 'n' if required.
 
         Args:
             model (torch.nn.Module): Model to update.
@@ -746,13 +744,13 @@ class RTDETRDetectionModel(DetectionModel):
         super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
 
     def _apply(self, fn):
-        """Apply a function to all tensors in the model, including decoder anchors and valid mask.
+        """Apply a function to all tensors in the model that are not parameters or registered buffers.
 
         Args:
             fn (function): The function to apply to the model.
 
         Returns:
-            (RTDETRDetectionModel): An updated RTDETRDetectionModel object.
+            (RTDETRDetectionModel): An updated BaseModel object.
         """
         self = super()._apply(fn)
         m = self.model[-1]
@@ -771,11 +769,11 @@ class RTDETRDetectionModel(DetectionModel):
 
         Args:
             batch (dict): Dictionary containing image and label data.
-            preds (tuple, optional): Precomputed model predictions.
+            preds (torch.Tensor, optional): Precomputed model predictions.
 
         Returns:
-            (torch.Tensor): Total loss value.
-            (torch.Tensor): Main three losses in a tensor.
+            loss_sum (torch.Tensor): Total loss value.
+            loss_items (torch.Tensor): Main three losses in a tensor.
         """
         if not hasattr(self, "criterion"):
             self.criterion = self.init_criterion()
@@ -821,7 +819,7 @@ class RTDETRDetectionModel(DetectionModel):
             visualize (bool): If True, save feature maps for visualization.
             batch (dict, optional): Ground truth data for evaluation.
             augment (bool): If True, perform data augmentation during inference.
-            embed (list, optional): A list of layer indices to return embeddings from.
+            embed (list, optional): A list of feature vectors/embeddings to return.
 
         Returns:
             (torch.Tensor): Model's output tensor.
@@ -896,7 +894,7 @@ class WorldModel(DetectionModel):
         self.model[-1].nc = len(text)
 
     def get_text_pe(self, text, batch=80, cache_clip_model=True):
-        """Get text positional embeddings using the CLIP model.
+        """Get text positional embeddings for offline inference without CLIP model.
 
         Args:
             text (list[str]): List of class names.
@@ -927,7 +925,7 @@ class WorldModel(DetectionModel):
             visualize (bool): If True, save feature maps for visualization.
             txt_feats (torch.Tensor, optional): The text features, use it if it's given.
             augment (bool): If True, perform data augmentation during inference.
-            embed (list, optional): A list of layer indices to return embeddings from.
+            embed (list, optional): A list of feature vectors/embeddings to return.
 
         Returns:
             (torch.Tensor): Model's output tensor.
@@ -1018,7 +1016,7 @@ class YOLOEModel(DetectionModel):
 
     @smart_inference_mode()
     def get_text_pe(self, text, batch=80, cache_clip_model=False, without_reprta=False):
-        """Get text positional embeddings using the CLIP model.
+        """Get text positional embeddings for offline inference without CLIP model.
 
         Args:
             text (list[str]): List of class names.
@@ -1054,7 +1052,7 @@ class YOLOEModel(DetectionModel):
 
     @smart_inference_mode()
     def get_visual_pe(self, img, visual):
-        """Get visual positional embeddings.
+        """Get visual embeddings.
 
         Args:
             img (torch.Tensor): Input image tensor.
@@ -1099,7 +1097,7 @@ class YOLOEModel(DetectionModel):
         """Get fused vocabulary layer from the model.
 
         Args:
-            names (list[str]): List of class names.
+            names (list): List of class names.
 
         Returns:
             (nn.ModuleList): List of vocabulary modules.
@@ -1140,8 +1138,8 @@ class YOLOEModel(DetectionModel):
         """Get class positional embeddings.
 
         Args:
-            tpe (torch.Tensor | None): Text positional embeddings.
-            vpe (torch.Tensor | None): Visual positional embeddings.
+            tpe (torch.Tensor, optional): Text positional embeddings.
+            vpe (torch.Tensor, optional): Visual positional embeddings.
 
         Returns:
             (torch.Tensor): Class positional embeddings.
@@ -1168,7 +1166,7 @@ class YOLOEModel(DetectionModel):
             visualize (bool): If True, save feature maps for visualization.
             tpe (torch.Tensor, optional): Text positional embeddings.
             augment (bool): If True, perform data augmentation during inference.
-            embed (list, optional): A list of layer indices to return embeddings from.
+            embed (list, optional): A list of feature vectors/embeddings to return.
             vpe (torch.Tensor, optional): Visual positional embeddings.
             return_vpe (bool): If True, return visual positional embeddings.
 
@@ -1302,7 +1300,7 @@ class Ensemble(torch.nn.ModuleList):
         super().__init__()
 
     def forward(self, x, augment=False, profile=False, visualize=False):
-        """Run ensemble forward pass and concatenate predictions from all models.
+        """Generate the YOLO network's final layer.
 
         Args:
             x (torch.Tensor): Input tensor.
@@ -1311,8 +1309,8 @@ class Ensemble(torch.nn.ModuleList):
             visualize (bool): Whether to visualize the features.
 
         Returns:
-            (torch.Tensor): Concatenated predictions from all models.
-            (None): Always None for ensemble inference.
+            y (torch.Tensor): Concatenated predictions from all models.
+            train_out (None): Always None for ensemble inference.
         """
         y = [module(x, augment, profile, visualize)[0] for module in self]
         # y = torch.stack(y).max(0)[0]  # max ensemble
@@ -1418,12 +1416,12 @@ def torch_safe_load(weight, safe_only=False):
     function. After installation, the function again attempts to load the model using torch.load().
 
     Args:
-        weight (str | Path): The file path of the PyTorch model.
+        weight (str): The file path of the PyTorch model.
         safe_only (bool): If True, replace unknown classes with SafeClass during loading.
 
     Returns:
-        (dict): The loaded model checkpoint.
-        (str): The loaded filename.
+        ckpt (dict): The loaded model checkpoint.
+        file (str): The loaded filename.
 
     Examples:
         >>> from ultralytics.nn.tasks import torch_safe_load
@@ -1494,7 +1492,7 @@ def torch_safe_load(weight, safe_only=False):
 
 
 def load_checkpoint(weight, device=None, inplace=True, fuse=False):
-    """Load single model weights.
+    """Load a single model weights.
 
     Args:
         weight (str | Path): Model weight path.
@@ -1503,8 +1501,8 @@ def load_checkpoint(weight, device=None, inplace=True, fuse=False):
         fuse (bool): Whether to fuse model.
 
     Returns:
-        (torch.nn.Module): Loaded model.
-        (dict): Model checkpoint dictionary.
+        model (torch.nn.Module): Loaded model.
+        ckpt (dict): Model checkpoint dictionary.
     """
     ckpt, weight = torch_safe_load(weight)  # load ckpt
     args = {**DEFAULT_CFG_DICT, **(ckpt.get("train_args", {}))}  # combine model and default args, preferring model args
@@ -1539,8 +1537,8 @@ def parse_model(d, ch, verbose=True):
         verbose (bool): Whether to print model details.
 
     Returns:
-        (torch.nn.Sequential): PyTorch model.
-        (list): Sorted list of layer indices whose outputs need to be saved.
+        model (torch.nn.Sequential): PyTorch model.
+        save (list): Sorted list of output layers.
     """
     import ast
 
@@ -1726,7 +1724,7 @@ def parse_model(d, ch, verbose=True):
 
 
 def yaml_model_load(path):
-    """Load a YOLO model from a YAML file.
+    """Load a YOLOv8 model from a YAML file.
 
     Args:
         path (str | Path): Path to the YAML file.
@@ -1755,7 +1753,7 @@ def guess_model_scale(model_path):
         model_path (str | Path): The path to the YOLO model's YAML file.
 
     Returns:
-        (str): The size character of the model's scale (n, s, m, l, or x), or empty string if not found.
+        (str): The size character of the model's scale (n, s, m, l, or x).
     """
     try:
         return re.search(r"yolo(e-)?[v]?\d+([nslmx])", Path(model_path).stem).group(2)
@@ -1767,7 +1765,7 @@ def guess_model_task(model):
     """Guess the task of a PyTorch model from its architecture or configuration.
 
     Args:
-        model (torch.nn.Module | dict | str | Path): PyTorch model, model configuration dict, or model file path.
+        model (torch.nn.Module | dict): PyTorch model or model configuration in YAML format.
 
     Returns:
         (str): Task of the model ('detect', 'segment', 'classify', 'pose', 'obb').

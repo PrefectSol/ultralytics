@@ -14,7 +14,7 @@ from torch import Tensor, nn
 
 
 class DotProductScoring(torch.nn.Module):
-    """A module that computes dot-product scores between query features and pooled prompt embeddings."""
+    """A module that computes dot-product scores between a set of query features and a."""
 
     def __init__(
         self,
@@ -77,7 +77,7 @@ class DotProductScoring(torch.nn.Module):
 
 
 class LayerScale(nn.Module):
-    """LayerScale module for per-channel scaling of layer outputs."""
+    """LayerScale module as introduced in "Meta Pseudo Labels" and used in."""
 
     def __init__(
         self,

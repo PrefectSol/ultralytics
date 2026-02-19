@@ -65,7 +65,7 @@ def onnx2saved_model(
     disable_group_convolution: bool = False,
     prefix="",
 ):
-    """Convert an ONNX model to TensorFlow SavedModel format using onnx2tf.
+    """Convert a ONNX model to TensorFlow SavedModel format via ONNX.
 
     Args:
         onnx_file (str): ONNX file path.

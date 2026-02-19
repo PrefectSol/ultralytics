@@ -70,7 +70,7 @@ class SegmentationPredictor(DetectionPredictor):
             preds (list[torch.Tensor]): List of predicted bounding boxes, scores, and masks.
             img (torch.Tensor): The image after preprocessing.
             orig_imgs (list[np.ndarray]): List of original images before preprocessing.
-            protos (torch.Tensor): Prototype masks tensor with shape (B, C, H, W).
+            protos (list[torch.Tensor]): List of prototype masks.
 
         Returns:
             (list[Results]): List of result objects containing the original images, image paths, class names, bounding

@@ -105,7 +105,7 @@ class RTDETRValidator(DetectionValidator):
     """RTDETRValidator extends the DetectionValidator class to provide validation capabilities specifically tailored for
     the RT-DETR (Real-Time DETR) object detection model.
 
-    The class allows building of an RTDETR-specific dataset for validation, applies confidence thresholding for
+    The class allows building of an RTDETR-specific dataset for validation, applies Non-maximum suppression for
     post-processing, and updates evaluation metrics accordingly.
 
     Attributes:
@@ -114,7 +114,7 @@ class RTDETRValidator(DetectionValidator):
 
     Methods:
         build_dataset: Build an RTDETR Dataset for validation.
-        postprocess: Apply confidence thresholding to prediction outputs.
+        postprocess: Apply Non-maximum suppression to prediction outputs.
 
     Examples:
         Initialize and run RT-DETR validation
@@ -152,13 +152,13 @@ class RTDETRValidator(DetectionValidator):
         )
 
     def scale_preds(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> dict[str, torch.Tensor]:
-        """Return predictions unchanged as RT-DETR handles scaling in postprocessing."""
+        """Scales predictions to the original image size."""
         return predn
 
     def postprocess(
         self, preds: torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor]
     ) -> list[dict[str, torch.Tensor]]:
-        """Apply confidence thresholding to prediction outputs.
+        """Apply Non-maximum suppression to prediction outputs.
 
         Args:
             preds (torch.Tensor | list | tuple): Raw predictions from the model. If tensor, should have shape

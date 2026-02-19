@@ -214,7 +214,7 @@ def validate_args(format, passed_args, valid_args):
 
     Args:
         format (str): The export format.
-        passed_args (SimpleNamespace): The arguments used during export.
+        passed_args (Namespace): The arguments used during export.
         valid_args (list): List of valid arguments for the format.
 
     Raises:
@@ -271,7 +271,7 @@ class Exporter:
         pretty_name (str): Formatted model name for display purposes.
         metadata (dict): Model metadata including description, author, version, etc.
         device (torch.device): Device on which the model is loaded.
-        imgsz (list): Input image size for the model.
+        imgsz (tuple): Input image size for the model.
 
     Methods:
         __call__: Main export method that handles the export process.
@@ -310,7 +310,7 @@ class Exporter:
         """Initialize the Exporter class.
 
         Args:
-            cfg (str | Path | dict | SimpleNamespace, optional): Configuration file path or configuration object.
+            cfg (str, optional): Path to a configuration file.
             overrides (dict, optional): Configuration overrides.
             _callbacks (dict, optional): Dictionary of callback functions.
         """
@@ -1135,7 +1135,7 @@ class Exporter:
 
     @try_export
     def export_axelera(self, prefix=colorstr("Axelera:")):
-        """Export YOLO model to Axelera format."""
+        """YOLO Axelera export."""
         os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
         try:
             from axelera import compiler
@@ -1202,16 +1202,16 @@ class Exporter:
 
     @try_export
     def export_executorch(self, prefix=colorstr("ExecuTorch:")):
-        """Export YOLO model to ExecuTorch *.pte format."""
+        """Exports a model to ExecuTorch (.pte) format into a dedicated directory and saves the required metadata,
+        following Ultralytics conventions.
+        """
+        LOGGER.info(f"\n{prefix} starting export with ExecuTorch...")
         assert TORCH_2_9, f"ExecuTorch requires torch>=2.9.0 but torch=={TORCH_VERSION} is installed"
 
         check_executorch_requirements()
 
-        from executorch import version as executorch_version
         from executorch.backends.xnnpack.partition.xnnpack_partitioner import XnnpackPartitioner
         from executorch.exir import to_edge_transform_and_lower
-
-        LOGGER.info(f"\n{prefix} starting export with ExecuTorch {executorch_version.__version__}...")
 
         file_directory = Path(str(self.file).replace(self.file.suffix, "_executorch_model"))
         file_directory.mkdir(parents=True, exist_ok=True)
@@ -1300,6 +1300,7 @@ class Exporter:
             "Export only supported on Linux."
             "See https://developer.aitrios.sony-semicon.com/en/docs/raspberry-pi-ai-camera/imx500-converter?version=3.17.3&progLang="
         )
+        assert not ARM64, "IMX export is not supported on ARM64 architectures."
         assert IS_PYTHON_MINIMUM_3_9, "IMX export is only supported on Python 3.9 or above."
 
         if getattr(self.model, "end2end", False):
@@ -1469,7 +1470,7 @@ class IOSDetectModel(torch.nn.Module):
         Args:
             model (torch.nn.Module): The YOLO model to wrap.
             im (torch.Tensor): Example input tensor with shape (B, C, H, W).
-            mlprogram (bool): Whether exporting to MLProgram format.
+            mlprogram (bool): Whether exporting to MLProgram format to fix NMS bug.
         """
         super().__init__()
         _, _, h, w = im.shape  # batch, channel, height, width
@@ -1502,7 +1503,7 @@ class NMSModel(torch.nn.Module):
 
         Args:
             model (torch.nn.Module): The model to wrap with NMS postprocessing.
-            args (SimpleNamespace): The export arguments.
+            args (Namespace): The export arguments.
         """
         super().__init__()
         self.model = model
@@ -1514,11 +1515,11 @@ class NMSModel(torch.nn.Module):
         """Perform inference with NMS post-processing. Supports Detect, Segment, OBB and Pose.
 
         Args:
-            x (torch.Tensor): The preprocessed tensor with shape (B, C, H, W).
+            x (torch.Tensor): The preprocessed tensor with shape (N, 3, H, W).
 
         Returns:
-            (torch.Tensor | tuple): Tensor of shape (B, max_det, 4 + 2 + extra_shape) where B is the batch size, or a
-                tuple of (detections, proto) for segmentation models.
+            (torch.Tensor): List of detections, each an (N, max_det, 4 + 2 + extra_shape) Tensor where N is the number
+                of detections after NMS.
         """
         from functools import partial
 

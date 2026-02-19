@@ -191,7 +191,8 @@ class ClassificationTrainer(BaseTrainer):
             prefix (str, optional): Prefix to prepend to loss names.
 
         Returns:
-            (dict | list): Dictionary of labeled loss items if loss_items is provided, otherwise list of keys.
+            keys (list[str]): List of loss keys if loss_items is None.
+            loss_dict (dict[str, float]): Dictionary of loss items if loss_items is provided.
         """
         keys = [f"{prefix}/{x}" for x in self.loss_names]
         if loss_items is None:
@@ -204,7 +205,7 @@ class ClassificationTrainer(BaseTrainer):
 
         Args:
             batch (dict[str, torch.Tensor]): Batch containing images and class labels.
-            ni (int): Batch index used for naming the output file.
+            ni (int): Number of iterations.
         """
         batch["batch_idx"] = torch.arange(batch["img"].shape[0])  # add batch index for plotting
         plot_images(

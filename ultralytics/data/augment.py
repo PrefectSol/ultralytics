@@ -221,7 +221,7 @@ class Compose:
             index (int | list[int]): Index or list of indices of the transforms to retrieve.
 
         Returns:
-            (Compose | Any): A new Compose object if index is a list, or a single transform if index is an int.
+            (Compose): A new Compose object containing the selected transform(s).
 
         Raises:
             AssertionError: If the index is not of type int or list.
@@ -229,8 +229,8 @@ class Compose:
         Examples:
             >>> transforms = [RandomFlip(), RandomPerspective(10), RandomHSV(0.5, 0.5, 0.5)]
             >>> compose = Compose(transforms)
-            >>> single_transform = compose[1]  # Returns the RandomPerspective transform directly
-            >>> multiple_transforms = compose[[0, 1]]  # Returns a Compose object with RandomFlip and RandomPerspective
+            >>> single_transform = compose[1]  # Returns a Compose object with only RandomPerspective
+            >>> multiple_transforms = compose[0:2]  # Returns a Compose object with RandomFlip and RandomPerspective
         """
         assert isinstance(index, (int, list)), f"The indices should be either list or int type but got {type(index)}"
         return Compose([self.transforms[i] for i in index]) if isinstance(index, list) else self.transforms[index]
@@ -248,7 +248,7 @@ class Compose:
         Examples:
             >>> compose = Compose([Transform1(), Transform2(), Transform3()])
             >>> compose[1] = NewTransform()  # Replace second transform
-            >>> compose[[0, 1]] = [NewTransform1(), NewTransform2()]  # Replace first two transforms
+            >>> compose[0:2] = [NewTransform1(), NewTransform2()]  # Replace first two transforms
         """
         assert isinstance(index, (int, list)), f"The indices should be either list or int type but got {type(index)}"
         if isinstance(index, list):
@@ -398,15 +398,15 @@ class BaseMixTransform:
         raise NotImplementedError
 
     def get_indexes(self):
-        """Get a random index for mosaic augmentation.
+        """Get a list of shuffled indexes for mosaic augmentation.
 
         Returns:
-            (int): A random index from the dataset.
+            (list[int]): A list of shuffled indexes from the dataset.
 
         Examples:
             >>> transform = BaseMixTransform(dataset)
-            >>> index = transform.get_indexes()
-            >>> print(index)  # 7
+            >>> indexes = transform.get_indexes()
+            >>> print(indexes)  # [3, 18, 7, 2]
         """
         return random.randint(0, len(self.dataset) - 1)
 
@@ -430,7 +430,7 @@ class BaseMixTransform:
             ...     "cls": torch.tensor([[0], [1]]),
             ...     "mix_labels": [{"texts": [["bird"], ["fish"]], "cls": torch.tensor([[0], [1]])}],
             ... }
-            >>> updated_labels = BaseMixTransform._update_label_text(labels)
+            >>> updated_labels = self._update_label_text(labels)
             >>> print(updated_labels["texts"])
             [['cat'], ['dog'], ['bird'], ['fish']]
             >>> print(updated_labels["cls"])
@@ -466,11 +466,11 @@ class Mosaic(BaseMixTransform):
         imgsz (int): Image size (height and width) after mosaic pipeline of a single image.
         p (float): Probability of applying the mosaic augmentation. Must be in the range 0-1.
         n (int): The grid size, either 4 (for 2x2) or 9 (for 3x3).
-        border (tuple[int, int]): Border size for height and width.
+        border (tuple[int, int]): Border size for width and height.
 
     Methods:
         get_indexes: Return a list of random indexes from the dataset.
-        _mix_transform: Apply mosaic transformation to the input image and labels.
+        _mix_transform: Apply mixup transformation to the input image and labels.
         _mosaic3: Create a 1x3 image mosaic.
         _mosaic4: Create a 2x2 image mosaic.
         _mosaic9: Create a 3x3 image mosaic.
@@ -508,7 +508,7 @@ class Mosaic(BaseMixTransform):
         """Return a list of random indexes from the dataset for mosaic augmentation.
 
         This method selects random image indexes either from a buffer or from the entire dataset, depending on the
-        'buffer_enabled' attribute. It is used to choose images for creating mosaic augmentations.
+        'buffer' parameter. It is used to choose images for creating mosaic augmentations.
 
         Returns:
             (list[int]): A list of random image indexes. The length of the list is n-1, where n is the number of images
@@ -1002,7 +1002,7 @@ class RandomPerspective:
         scale (float): Scaling factor range, e.g., scale=0.1 means 0.9-1.1.
         shear (float): Maximum shear angle in degrees.
         perspective (float): Perspective distortion factor.
-        border (tuple[int, int]): Mosaic border size as (y, x).
+        border (tuple[int, int]): Mosaic border size as (x, y).
         pre_transform (Callable | None): Optional transform to apply before the random perspective.
 
     Methods:
@@ -1043,7 +1043,7 @@ class RandomPerspective:
             scale (float): Scaling factor interval, e.g., a scale factor of 0.5 allows a resize between 50%-150%.
             shear (float): Shear intensity (angle in degrees).
             perspective (float): Perspective distortion factor.
-            border (tuple[int, int]): Tuple specifying mosaic border (y, x).
+            border (tuple[int, int]): Tuple specifying mosaic border (top/bottom, left/right).
             pre_transform (Callable | None): Function/transform to apply to the image before starting the random
                 transformation.
         """
@@ -1075,8 +1075,7 @@ class RandomPerspective:
             >>> import numpy as np
             >>> img = np.random.rand(100, 100, 3)
             >>> border = (10, 10)
-            >>> rp = RandomPerspective()
-            >>> transformed_img, matrix, scale = rp.affine_transform(img, border)
+            >>> transformed_img, matrix, scale = affine_transform(img, border)
         """
         # Center
         C = np.eye(3, dtype=np.float32)
@@ -1134,10 +1133,9 @@ class RandomPerspective:
             (np.ndarray): Transformed bounding boxes in xyxy format with shape (N, 4).
 
         Examples:
-            >>> rp = RandomPerspective()
-            >>> bboxes = np.array([[10, 10, 20, 20], [30, 30, 40, 40]], dtype=np.float32)
-            >>> M = np.eye(3, dtype=np.float32)
-            >>> transformed_bboxes = rp.apply_bboxes(bboxes, M)
+            >>> bboxes = torch.tensor([[10, 10, 20, 20], [30, 30, 40, 40]])
+            >>> M = torch.eye(3)
+            >>> transformed_bboxes = apply_bboxes(bboxes, M)
         """
         n = len(bboxes)
         if n == 0:
@@ -1169,10 +1167,9 @@ class RandomPerspective:
             segments (np.ndarray): Transformed and clipped segments with shape (N, M, 2).
 
         Examples:
-            >>> rp = RandomPerspective()
             >>> segments = np.random.rand(10, 500, 2)  # 10 segments with 500 points each
             >>> M = np.eye(3)  # Identity transformation matrix
-            >>> new_bboxes, new_segments = rp.apply_segments(segments, M)
+            >>> new_bboxes, new_segments = apply_segments(segments, M)
         """
         n, num = segments.shape[:2]
         if n == 0:
@@ -1185,8 +1182,8 @@ class RandomPerspective:
         xy = xy[:, :2] / xy[:, 2:3]
         segments = xy.reshape(n, -1, 2)
         bboxes = np.stack([segment2box(xy, self.size[0], self.size[1]) for xy in segments], 0)
-        segments[..., 0] = segments[..., 0].clip(bboxes[:, 0:1], bboxes[:, 2:3])
-        segments[..., 1] = segments[..., 1].clip(bboxes[:, 1:2], bboxes[:, 3:4])
+        # segments[..., 0] = segments[..., 0].clip(bboxes[:, 0:1], bboxes[:, 2:3])
+        # segments[..., 1] = segments[..., 1].clip(bboxes[:, 1:2], bboxes[:, 3:4])
         return bboxes, segments
 
     def apply_keypoints(self, keypoints: np.ndarray, M: np.ndarray) -> np.ndarray:
@@ -1197,12 +1194,12 @@ class RandomPerspective:
         boundaries after transformation.
 
         Args:
-            keypoints (np.ndarray): Array of keypoints with shape (N, K, 3), where N is the number of instances, K is
+            keypoints (np.ndarray): Array of keypoints with shape (N, 17, 3), where N is the number of instances, 17 is
                 the number of keypoints per instance, and 3 represents (x, y, visibility).
             M (np.ndarray): 3x3 affine transformation matrix.
 
         Returns:
-            (np.ndarray): Transformed keypoints array with the same shape as input (N, K, 3).
+            (np.ndarray): Transformed keypoints array with the same shape as input (N, 17, 3).
 
         Examples:
             >>> random_perspective = RandomPerspective()
@@ -1317,7 +1314,7 @@ class RandomPerspective:
         by the augmentation process.
 
         Args:
-            box1 (np.ndarray): Original boxes before augmentation, shape (4, N) where N is the number of boxes. Format
+            box1 (np.ndarray): Original boxes before augmentation, shape (4, N) where n is the number of boxes. Format
                 is [x1, y1, x2, y2] in absolute coordinates.
             box2 (np.ndarray): Augmented boxes after transformation, shape (4, N). Format is [x1, y1, x2, y2] in
                 absolute coordinates.
@@ -1329,7 +1326,7 @@ class RandomPerspective:
             eps (float): Small epsilon value to prevent division by zero.
 
         Returns:
-            (np.ndarray): Boolean array of shape (N,) indicating which boxes are candidates. True values correspond to
+            (np.ndarray): Boolean array of shape (n) indicating which boxes are candidates. True values correspond to
                 boxes that meet all criteria.
 
         Examples:
@@ -1365,8 +1362,8 @@ class RandomHSV:
         >>> augmenter = RandomHSV(hgain=0.5, sgain=0.5, vgain=0.5)
         >>> image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
         >>> labels = {"img": image}
-        >>> labels = augmenter(labels)
-        >>> augmented_image = labels["img"]
+        >>> augmenter(labels)
+        >>> augmented_image = augmented_labels["img"]
     """
 
     def __init__(self, hgain: float = 0.5, sgain: float = 0.5, vgain: float = 0.5) -> None:
@@ -1394,7 +1391,7 @@ class RandomHSV:
                 image as a numpy array.
 
         Returns:
-            (dict[str, Any]): The labels dictionary with the HSV-augmented image.
+            (dict[str, Any]): A dictionary containing the mixed image and adjusted labels.
 
         Examples:
             >>> hsv_augmenter = RandomHSV(hgain=0.5, sgain=0.5, vgain=0.5)
@@ -1809,7 +1806,11 @@ class Albumentations:
 
         Args:
             p (float): Probability of applying the augmentations. Must be between 0 and 1.
-            transforms (list | None): List of custom Albumentations transforms. If None, uses default transforms.
+            transforms (list, optional): List of custom Albumentations transforms. If None, uses default transforms.
+
+        Raises:
+            ImportError: If the Albumentations package is not installed.
+            Exception: For any other errors during initialization.
         """
         self.p = p
         self.transform = None
@@ -2037,7 +2038,7 @@ class Format:
         Returns:
             (dict[str, Any]): A dictionary with formatted data, including:
                 - 'img': Formatted image tensor.
-                - 'cls': Class labels tensor.
+                - 'cls': Class label's tensor.
                 - 'bboxes': Bounding boxes tensor in the specified format.
                 - 'masks': Instance masks tensor (if return_mask is True).
                 - 'keypoints': Keypoints tensor (if return_keypoint is True).
@@ -2110,7 +2111,7 @@ class Format:
         This function performs the following operations:
         1. Ensures the image has 3 dimensions (adds a channel dimension if needed).
         2. Transposes the image from HWC to CHW format.
-        3. Optionally reverses the color channels (e.g., BGR to RGB) based on the bgr probability.
+        3. Optionally flips the color channels from RGB to BGR.
         4. Converts the image to a contiguous array.
         5. Converts the Numpy array to a PyTorch tensor.
 
@@ -2275,7 +2276,7 @@ class RandomLoadText:
         neg_samples (tuple[int, int]): Range for randomly sampling negative texts.
         max_samples (int): Maximum number of different text samples in one image.
         padding (bool): Whether to pad texts to max_samples.
-        padding_value (list[str]): The text used for padding when padding is True.
+        padding_value (str): The text used for padding when padding is True.
 
     Methods:
         __call__: Process the input labels and return updated classes and texts.
@@ -2309,7 +2310,7 @@ class RandomLoadText:
             max_samples (int): The maximum number of different text samples in one image.
             padding (bool): Whether to pad texts to max_samples. If True, the number of texts will always be equal to
                 max_samples.
-            padding_value (list[str]): The padding text to use when padding is True.
+            padding_value (str): The padding text to use when padding is True.
         """
         self.prompt_format = prompt_format
         self.neg_samples = neg_samples
@@ -2392,7 +2393,7 @@ def v8_transforms(dataset, imgsz: int, hyp: IterableSimpleNamespace, stretch: bo
     Args:
         dataset (Dataset): The dataset object containing image data and annotations.
         imgsz (int): The target image size for resizing.
-        hyp (IterableSimpleNamespace): A namespace of hyperparameters controlling various aspects of the
+        hyp (IterableSimpleNamespace): A dictionary of hyperparameters controlling various aspects of the
             transformations.
         stretch (bool): If True, applies stretching to the image. If False, uses LetterBox resizing.
 
@@ -2472,12 +2473,12 @@ def classify_transforms(
     normalization.
 
     Args:
-        size (tuple[int, int] | int): The target size for the transformed image. If an int, it defines the shortest
-            edge. If a tuple, it defines (height, width).
+        size (int | tuple): The target size for the transformed image. If an int, it defines the shortest edge. If a
+            tuple, it defines (height, width).
         mean (tuple[float, float, float]): Mean values for each RGB channel used in normalization.
         std (tuple[float, float, float]): Standard deviation values for each RGB channel used in normalization.
         interpolation (str): Interpolation method of either 'NEAREST', 'BILINEAR' or 'BICUBIC'.
-        crop_fraction (float | None): Deprecated, will be removed in a future version.
+        crop_fraction (float): Deprecated, will be removed in a future version.
 
     Returns:
         (torchvision.transforms.Compose): A composition of torchvision transforms.
@@ -2533,8 +2534,8 @@ def classify_augmentations(
         size (int): Target size for the image after transformations.
         mean (tuple[float, float, float]): Mean values for each RGB channel used in normalization.
         std (tuple[float, float, float]): Standard deviation values for each RGB channel used in normalization.
-        scale (tuple[float, float] | None): Range of the proportion of the original image area to crop.
-        ratio (tuple[float, float] | None): Range of aspect ratio for the cropped area.
+        scale (tuple[float, float] | None): Range of size of the origin size cropped.
+        ratio (tuple[float, float] | None): Range of aspect ratio of the origin aspect ratio cropped.
         hflip (float): Probability of horizontal flip.
         vflip (float): Probability of vertical flip.
         auto_augment (str | None): Auto augmentation policy. Can be 'randaugment', 'augmix', 'autoaugment' or None.
@@ -2716,6 +2717,9 @@ class CenterCrop:
         Args:
             size (int | tuple[int, int]): The desired output size of the crop. If size is an int, a square crop (size,
                 size) is made. If size is a sequence like (h, w), it is used as the output size.
+
+        Returns:
+            (None): This method initializes the object and does not return anything.
         """
         super().__init__()
         self.h, self.w = (size, size) if isinstance(size, int) else size
@@ -2723,7 +2727,8 @@ class CenterCrop:
     def __call__(self, im: Image.Image | np.ndarray) -> np.ndarray:
         """Apply center cropping to an input image.
 
-        This method crops the largest centered square from the image and resizes it to the specified dimensions.
+        This method resizes and crops the center of the image using a letterbox method. It maintains the aspect ratio of
+        the original image while fitting it into the specified dimensions.
 
         Args:
             im (np.ndarray | PIL.Image.Image): The input image as a numpy array of shape (H, W, C) or a PIL Image
@@ -2767,7 +2772,7 @@ class ToTensor:
 
     Notes:
         The input image is expected to be in BGR format with shape (H, W, C).
-        The output tensor will be in BGR format with shape (C, H, W), normalized to [0, 1].
+        The output tensor will be in RGB format with shape (C, H, W), normalized to [0, 1].
     """
 
     def __init__(self, half: bool = False):
@@ -2787,14 +2792,15 @@ class ToTensor:
         """Transform an image from a numpy array to a PyTorch tensor.
 
         This method converts the input image from a numpy array to a PyTorch tensor, applying optional half-precision
-        conversion and normalization. The image is transposed from HWC to CHW format.
+        conversion and normalization. The image is transposed from HWC to CHW format and the color channels are reversed
+        from BGR to RGB.
 
         Args:
-            im (np.ndarray): Input image as a numpy array with shape (H, W, C) in BGR order.
+            im (np.ndarray): Input image as a numpy array with shape (H, W, C) in RGB order.
 
         Returns:
             (torch.Tensor): The transformed image as a PyTorch tensor in float32 or float16, normalized to [0, 1] with
-                shape (C, H, W) in BGR order.
+                shape (C, H, W) in RGB order.
 
         Examples:
             >>> transform = ToTensor(half=True)

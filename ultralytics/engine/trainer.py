@@ -85,16 +85,16 @@ class BaseTrainer:
         start_epoch (int): Starting epoch for training.
         device (torch.device): Device to use for training.
         amp (bool): Flag to enable AMP (Automatic Mixed Precision).
-        scaler (torch.amp.GradScaler): Gradient scaler for AMP.
-        data (dict): Dataset dictionary containing paths and metadata.
-        ema (ModelEMA): EMA (Exponential Moving Average) of the model.
+        scaler (amp.GradScaler): Gradient scaler for AMP.
+        data (str): Path to data.
+        ema (nn.Module): EMA (Exponential Moving Average) of the model.
         resume (bool): Resume training from a checkpoint.
-        lf (callable): Learning rate scheduling function.
+        lf (nn.Module): Loss function.
         scheduler (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler.
         best_fitness (float): The best fitness value achieved.
         fitness (float): Current fitness value.
-        loss (torch.Tensor): Current loss value.
-        tloss (torch.Tensor): Running mean of loss items.
+        loss (float): Current loss value.
+        tloss (float): Total loss value.
         loss_names (list): List of loss names.
         csv (Path): Path to results CSV file.
         metrics (dict): Dictionary of metrics.
@@ -102,7 +102,7 @@ class BaseTrainer:
 
     Methods:
         train: Execute the training process.
-        validate: Run validation on the val set.
+        validate: Run validation on the test set.
         save_model: Save model training checkpoints.
         get_dataset: Get train and validation datasets.
         setup_model: Load, create, or download model.
@@ -118,9 +118,9 @@ class BaseTrainer:
         """Initialize the BaseTrainer class.
 
         Args:
-            cfg (str | dict | SimpleNamespace, optional): Path to a configuration file or configuration object.
+            cfg (str, optional): Path to a configuration file.
             overrides (dict, optional): Configuration overrides.
-            _callbacks (dict, optional): Dictionary of callback functions.
+            _callbacks (list, optional): List of callback functions.
         """
         self.hub_session = overrides.pop("session", None)  # HUB
         self.args = get_cfg(cfg, overrides)
@@ -217,7 +217,7 @@ class BaseTrainer:
             callback(self)
 
     def train(self):
-        """Execute the training process, using DDP subprocess for multi-GPU or direct training for single-GPU."""
+        """Allow device='', device=None on Multi-GPU systems to default to device=0."""
         # Run subprocess if DDP training, else train normally
         if self.ddp:
             # Argument checks
@@ -290,7 +290,7 @@ class BaseTrainer:
         self._setup_scheduler()
 
     def _setup_train(self):
-        """Configure model, optimizer, dataloaders, and training utilities before the training loop."""
+        """Build dataloaders and optimizer on correct rank process."""
         ckpt = self.setup_model()
         self.model = self.model.to(self.device)
         self.set_model_attributes()
@@ -360,7 +360,7 @@ class BaseTrainer:
         self.run_callbacks("on_pretrain_routine_end")
 
     def _do_train(self):
-        """Perform the full training loop including setup, epoch iteration, validation, and final evaluation."""
+        """Train the model with the specified world size."""
         if self.world_size > 1:
             self._setup_ddp()
         self._setup_train()
@@ -703,7 +703,7 @@ class BaseTrainer:
         """Load, create, or download model for any task.
 
         Returns:
-            (dict | None): Checkpoint to resume training from, or None if no checkpoint is loaded.
+            (dict): Optional checkpoint to resume training from.
         """
         if isinstance(self.model, torch.nn.Module):  # if model is loaded beforehand. No setup needed
             return
@@ -729,16 +729,15 @@ class BaseTrainer:
             self.ema.update(self.model)
 
     def preprocess_batch(self, batch):
-        """Allow custom preprocessing of model inputs and ground truths depending on task type."""
+        """Allow custom preprocessing model inputs and ground truths depending on task type."""
         return batch
 
     def validate(self):
         """Run validation on val set using self.validator.
 
         Returns:
-            (tuple): A tuple containing:
-                - metrics (dict | None): Dictionary of validation metrics, or None if validation was skipped.
-                - fitness (float | None): Fitness score for the validation, or None if validation was skipped.
+            metrics (dict): Dictionary of validation metrics.
+            fitness (float): Fitness score for the validation.
         """
         if self.ema and self.world_size > 1:
             # Sync EMA buffers from rank 0 to all ranks
@@ -769,10 +768,10 @@ class BaseTrainer:
         raise NotImplementedError("build_dataset function not implemented in trainer")
 
     def label_loss_items(self, loss_items=None, prefix="train"):
-        """Return a loss dict with labeled training loss items, or a list of loss names if loss_items is None.
+        """Return a loss dict with labeled training loss items tensor.
 
         Notes:
-            This is not needed for classification but necessary for segmentation & detection.
+            This is not needed for classification but necessary for segmentation & detection
         """
         return {"loss": loss_items} if loss_items is not None else ["loss"]
 
@@ -817,7 +816,7 @@ class BaseTrainer:
         self.plots[path] = {"data": data, "timestamp": time.time()}
 
     def final_eval(self):
-        """Perform final evaluation and validation for the YOLO model."""
+        """Perform final evaluation and validation for object detection YOLO model."""
         model = self.best if self.best.exists() else None
         with torch_distributed_zero_first(LOCAL_RANK):  # strip only on GPU 0; other GPUs should wait
             if RANK in {-1, 0}:
@@ -928,7 +927,7 @@ class BaseTrainer:
         return True
 
     def resume_training(self, ckpt):
-        """Resume YOLO training from a given checkpoint."""
+        """Resume YOLO training from given epoch and best fitness."""
         if ckpt is None or not self.resume:
             return
         start_epoch = ckpt.get("epoch", -1) + 1

@@ -14,7 +14,7 @@ from ultralytics.utils import ASSETS, DEFAULT_CFG, WEIGHTS_DIR
 
 
 def test_func(*args, **kwargs):
-    """Test function used as a callback stub to verify callback registration."""
+    """Test function callback for evaluating YOLO model performance metrics."""
     print("callback test passed")
 
 
