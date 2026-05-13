@@ -246,36 +246,32 @@ class YOLODataset(BaseDataset):
         hyp.cutmix = 0.0
         self.transforms = self.build_transforms(hyp)
 
-    def update_labels_info(self, label: dict) -> dict:
-        """Update label format for different tasks.
-
-        Args:
-            label (dict): Label dictionary containing bboxes, segments, keypoints, etc.
-
-        Returns:
-            (dict): Updated label dictionary with instances.
-
-        Notes:
-            cls is not with bboxes now, classification and semantic segmentation need an independent cls label
-            Can also support classification and semantic segmentation by adding or removing dict keys there.
-        """
+    def update_labels_info(self, label):
         bboxes = label.pop("bboxes")
         segments = label.pop("segments", [])
         keypoints = label.pop("keypoints", None)
         bbox_format = label.pop("bbox_format")
         normalized = label.pop("normalized")
 
-        # NOTE: do NOT resample oriented boxes
-        segment_resamples = 100 if self.use_obb else 1000
-        if len(segments) > 0:
-            # make sure segments interpolate correctly if original length is greater than segment_resamples
-            max_len = max(len(s) for s in segments)
-            segment_resamples = (max_len + 1) if segment_resamples < max_len else segment_resamples
-            # list[np.array(segment_resamples, 2)] * num_samples
-            segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
+        if self.use_obb:
+            # НЕ ресемплируем — оставляем ровно 4 точки
+            if len(segments) > 0:
+                segments = np.array(segments, dtype=np.float32)  # (N, 4, 2)
+                if segments.ndim == 2:
+                    segments = segments.reshape(-1, 4, 2)
+            else:
+                segments = np.zeros((0, 4, 2), dtype=np.float32)
         else:
-            segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
-        label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)
+            segment_resamples = 1000
+            if len(segments) > 0:
+                max_len = max(len(s) for s in segments)
+                segment_resamples = (max_len + 1) if segment_resamples < max_len else segment_resamples
+                segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
+            else:
+                segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
+
+        label["instances"] = Instances(bboxes, segments, keypoints, 
+                                        bbox_format=bbox_format, normalized=normalized)
         return label
 
     @staticmethod

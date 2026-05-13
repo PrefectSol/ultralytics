@@ -341,47 +341,65 @@ def ltwh2xywh(x):
     y[..., 1] = x[..., 1] + x[..., 3] / 2  # center y
     return y
 
-
 def xyxyxyxy2xywhr(x):
-    """Convert batched Oriented Bounding Boxes (OBB) from [xy1, xy2, xy3, xy4] to [xywh, rotation] format.
+    """
+    Convert 4 ordered corners to xywhr.
 
-    Args:
-        x (np.ndarray | torch.Tensor): Input box corners with shape (N, 8) in [xy1, xy2, xy3, xy4] format.
+    Convention:
+        p0 = x1y1 = head-left
+        p1 = x2y2 = head-right
+        p2 = x3y3 = tail-right
+        p3 = x4y4 = tail-left
 
-    Returns:
-        (np.ndarray | torch.Tensor): Converted data in [cx, cy, w, h, rotation] format with shape (N, 5). Rotation
-            values are in radians from [-pi/4, 3pi/4).
+    theta points from tail to head.
+    w = length along head-tail axis
+    h = cross size (head edge / tail edge length)
     """
     is_torch = isinstance(x, torch.Tensor)
-    points = x.cpu().numpy() if is_torch else x
-    points = points.reshape(len(x), -1, 2)
+    points = x.detach().cpu().numpy() if is_torch else x
+    points = points.reshape(len(x), 4, 2)
+
     rboxes = []
     for pts in points:
-        # NOTE: Use cv2.minAreaRect to get accurate xywhr,
-        # especially some objects are cut off by augmentations in dataloader.
-        (cx, cy), (w, h), angle = cv2.minAreaRect(pts)
-        # convert angle to radian and normalize to [-pi/4, 3pi/4)
-        theta = angle / 180 * np.pi
-        if w < h:
-            w, h = h, w
-            theta += np.pi / 2
-        while theta >= 3 * np.pi / 4:
-            theta -= np.pi
-        while theta < -np.pi / 4:
-            theta += np.pi
-        rboxes.append([cx, cy, w, h, theta])
-    return torch.tensor(rboxes, device=x.device, dtype=x.dtype) if is_torch else np.asarray(rboxes)
+        p0, p1, p2, p3 = pts
 
+        ctr = pts.mean(axis=0)
+        cx, cy = ctr[0], ctr[1]
+
+        head_mid = 0.5 * (p0 + p1)
+        tail_mid = 0.5 * (p2 + p3)
+
+        # direction tail -> head
+        forward = head_mid - tail_mid
+
+        # length along forward axis
+        w1 = np.linalg.norm(p0 - p3)
+        w2 = np.linalg.norm(p1 - p2)
+        w = 0.5 * (w1 + w2)
+
+        # width across object
+        h1 = np.linalg.norm(p1 - p0)
+        h2 = np.linalg.norm(p2 - p3)
+        h = 0.5 * (h1 + h2)
+
+        theta = np.arctan2(forward[1], forward[0])  # [-pi, pi]
+
+        rboxes.append([cx, cy, w, h, theta])
+
+    rboxes = np.asarray(rboxes, dtype=np.float32)
+    return torch.as_tensor(rboxes, device=x.device, dtype=x.dtype) if is_torch else rboxes
 
 def xywhr2xyxyxyxy(x):
-    """Convert batched Oriented Bounding Boxes (OBB) from [xywh, rotation] to [xy1, xy2, xy3, xy4] format.
+    """
+    Convert xywhr back to 4 ordered corners.
 
-    Args:
-        x (np.ndarray | torch.Tensor): Boxes in [cx, cy, w, h, rotation] format with shape (N, 5) or (B, N, 5). Rotation
-            values should be in radians from [-pi/4, 3pi/4).
+    Convention:
+        p0 = head-left
+        p1 = head-right
+        p2 = tail-right
+        p3 = tail-left
 
-    Returns:
-        (np.ndarray | torch.Tensor): Converted corner points with shape (N, 4, 2) or (B, N, 4, 2).
+    theta points from tail to head.
     """
     cos, sin, cat, stack = (
         (torch.cos, torch.sin, torch.cat, torch.stack)
@@ -391,17 +409,19 @@ def xywhr2xyxyxyxy(x):
 
     ctr = x[..., :2]
     w, h, angle = (x[..., i : i + 1] for i in range(2, 5))
-    cos_value, sin_value = cos(angle), sin(angle)
-    vec1 = [w / 2 * cos_value, w / 2 * sin_value]
-    vec2 = [-h / 2 * sin_value, h / 2 * cos_value]
-    vec1 = cat(vec1, -1)
-    vec2 = cat(vec2, -1)
-    pt1 = ctr + vec1 + vec2
-    pt2 = ctr + vec1 - vec2
-    pt3 = ctr - vec1 - vec2
-    pt4 = ctr - vec1 + vec2
-    return stack([pt1, pt2, pt3, pt4], -2)
 
+    # forward axis (tail -> head)
+    u = cat([w / 2 * cos(angle), w / 2 * sin(angle)], -1)
+
+    # side axis, perpendicular to forward
+    v = cat([-h / 2 * sin(angle), h / 2 * cos(angle)], -1)
+
+    p0 = ctr + u - v  # head-left
+    p1 = ctr + u + v  # head-right
+    p2 = ctr - u + v  # tail-right
+    p3 = ctr - u - v  # tail-left
+
+    return stack([p0, p1, p2, p3], -2)
 
 def ltwh2xyxy(x):
     """Convert bounding box from [x1, y1, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right.
@@ -602,21 +622,8 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None, normalize: bool
 
 
 def regularize_rboxes(rboxes):
-    """Regularize rotated bounding boxes to range [0, pi/2).
-
-    Args:
-        rboxes (torch.Tensor): Input rotated boxes with shape (N, 5) in xywhr format.
-
-    Returns:
-        (torch.Tensor): Regularized rotated boxes.
-    """
-    x, y, w, h, t = rboxes.unbind(dim=-1)
-    # Swap edge if t >= pi/2 while not being symmetrically opposite
-    swap = t % math.pi >= math.pi / 2
-    w_ = torch.where(swap, h, w)
-    h_ = torch.where(swap, w, h)
-    t = t % (math.pi / 2)
-    return torch.stack([x, y, w_, h_, t], dim=-1)  # regularized boxes
+    """Отключена: для полного угла [-π, π] регуляризация не нужна."""
+    return rboxes
 
 
 def masks2segments(masks: np.ndarray | torch.Tensor, strategy: str = "all") -> list[np.ndarray]:

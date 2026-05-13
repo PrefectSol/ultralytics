@@ -373,28 +373,23 @@ class Instances:
         if self.keypoints is not None:
             self.keypoints[..., 0] = w - self.keypoints[..., 0]
 
-    def clip(self, w: int, h: int) -> None:
-        """Clip coordinates to stay within image boundaries.
-
-        Args:
-            w (int): Image width.
-            h (int): Image height.
-        """
+    def clip(self, w, h, clip_segments=True):
         ori_format = self._bboxes.format
         self.convert_bbox(format="xyxy")
         self.bboxes[:, [0, 2]] = self.bboxes[:, [0, 2]].clip(0, w)
         self.bboxes[:, [1, 3]] = self.bboxes[:, [1, 3]].clip(0, h)
         if ori_format != "xyxy":
             self.convert_bbox(format=ori_format)
-        self.segments[..., 0] = self.segments[..., 0].clip(0, w)
-        self.segments[..., 1] = self.segments[..., 1].clip(0, h)
+        
+        if clip_segments:  # для обычной сегментации
+            self.segments[..., 0] = self.segments[..., 0].clip(0, w)
+            self.segments[..., 1] = self.segments[..., 1].clip(0, h)
+        # для OBB: НЕ клипаем сегменты (4 точки)
+        
         if self.keypoints is not None:
-            # Set out of bounds visibility to zero
             self.keypoints[..., 2][
-                (self.keypoints[..., 0] < 0)
-                | (self.keypoints[..., 0] > w)
-                | (self.keypoints[..., 1] < 0)
-                | (self.keypoints[..., 1] > h)
+                (self.keypoints[..., 0] < 0) | (self.keypoints[..., 0] > w) |
+                (self.keypoints[..., 1] < 0) | (self.keypoints[..., 1] > h)
             ] = 0.0
             self.keypoints[..., 0] = self.keypoints[..., 0].clip(0, w)
             self.keypoints[..., 1] = self.keypoints[..., 1].clip(0, h)

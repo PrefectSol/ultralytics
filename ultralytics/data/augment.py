@@ -1110,9 +1110,9 @@ class RandomPerspective:
         # Affine image
         if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():  # image changed
             if self.perspective:
-                img = cv2.warpPerspective(img, M, dsize=self.size, borderValue=(114, 114, 114))
+                img = cv2.warpPerspective(img, M, dsize=self.size, borderValue=(92, 92, 92))
             else:  # affine
-                img = cv2.warpAffine(img, M[:2], dsize=self.size, borderValue=(114, 114, 114))
+                img = cv2.warpAffine(img, M[:2], dsize=self.size, borderValue=(92, 92, 92))
             if img.ndim == 2:
                 img = img[..., None]
         return img, M, s
@@ -1151,40 +1151,22 @@ class RandomPerspective:
         y = xy[:, [1, 3, 5, 7]]
         return np.concatenate((x.min(1), y.min(1), x.max(1), y.max(1)), dtype=bboxes.dtype).reshape(4, n).T
 
-    def apply_segments(self, segments: np.ndarray, M: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Apply affine transformations to segments and generate new bounding boxes.
-
-        This function applies affine transformations to input segments and generates new bounding boxes based on the
-        transformed segments. It clips the transformed segments to fit within the new bounding boxes.
-
-        Args:
-            segments (np.ndarray): Input segments with shape (N, M, 2), where N is the number of segments and M is the
-                number of points in each segment.
-            M (np.ndarray): Affine transformation matrix with shape (3, 3).
-
-        Returns:
-            bboxes (np.ndarray): New bounding boxes with shape (N, 4) in xyxy format.
-            segments (np.ndarray): Transformed and clipped segments with shape (N, M, 2).
-
-        Examples:
-            >>> rp = RandomPerspective()
-            >>> segments = np.random.rand(10, 500, 2)  # 10 segments with 500 points each
-            >>> M = np.eye(3)  # Identity transformation matrix
-            >>> new_bboxes, new_segments = rp.apply_segments(segments, M)
-        """
+    def apply_segments(self, segments, M):
         n, num = segments.shape[:2]
         if n == 0:
             return [], segments
-
         xy = np.ones((n * num, 3), dtype=segments.dtype)
         segments = segments.reshape(-1, 2)
         xy[:, :2] = segments
-        xy = xy @ M.T  # transform
+        xy = xy @ M.T
         xy = xy[:, :2] / xy[:, 2:3]
         segments = xy.reshape(n, -1, 2)
         bboxes = np.stack([segment2box(xy, self.size[0], self.size[1]) for xy in segments], 0)
-        segments[..., 0] = segments[..., 0].clip(bboxes[:, 0:1], bboxes[:, 2:3])
-        segments[..., 1] = segments[..., 1].clip(bboxes[:, 1:2], bboxes[:, 3:4])
+        
+        # НЕ клипаем сегменты для OBB!
+        # segments[..., 0] = segments[..., 0].clip(...)  # убрать
+        # segments[..., 1] = segments[..., 1].clip(...)  # убрать
+        
         return bboxes, segments
 
     def apply_keypoints(self, keypoints: np.ndarray, M: np.ndarray) -> np.ndarray:
@@ -1285,7 +1267,7 @@ class RandomPerspective:
             keypoints = self.apply_keypoints(keypoints, M)
         new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
         # Clip
-        new_instances.clip(*self.size)
+        new_instances.clip(*self.size, clip_segments=False)
 
         # Filter instances
         instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)

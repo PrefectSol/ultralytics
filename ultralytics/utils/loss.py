@@ -17,6 +17,8 @@ from ultralytics.utils.torch_utils import autocast
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist, rbox2dist
 
+def canonicalize_geom_angle(theta: torch.Tensor) -> torch.Tensor:
+    return theta - torch.floor((theta + math.pi / 4) / math.pi) * math.pi
 
 class VarifocalLoss(nn.Module):
     """Varifocal loss by Zhang et al.
@@ -1016,8 +1018,10 @@ class v8OBBLoss(v8DetectionLoss):
         pred_distri, pred_scores, pred_angle = (
             preds["boxes"].permute(0, 2, 1).contiguous(),
             preds["scores"].permute(0, 2, 1).contiguous(),
-            preds["angle"].permute(0, 2, 1).contiguous(),
+            preds["angle"].permute(0, 2, 1).contiguous(),   # full directional angle
         )
+
+        pred_angle_geom = canonicalize_geom_angle(pred_angle)
         anchor_points, stride_tensor = make_anchors(preds["feats"], self.stride, 0.5)
         batch_size = pred_angle.shape[0]  # batch size
 
@@ -1033,6 +1037,8 @@ class v8OBBLoss(v8DetectionLoss):
             targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
             gt_labels, gt_bboxes = targets.split((1, 5), 2)  # cls, xywhr
             mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
+            gt_bboxes_geom = gt_bboxes.clone()
+            gt_bboxes_geom[..., 4] = canonicalize_geom_angle(gt_bboxes_geom[..., 4])
         except RuntimeError as e:
             raise TypeError(
                 "ERROR ❌ OBB dataset incorrectly formatted or not a OBB dataset.\n"
@@ -1043,22 +1049,24 @@ class v8OBBLoss(v8DetectionLoss):
             ) from e
 
         # Pboxes
-        pred_bboxes = self.bbox_decode(anchor_points, pred_distri, pred_angle)  # xyxy, (b, h*w, 4)
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri, pred_angle_geom)
 
         bboxes_for_assigner = pred_bboxes.clone().detach()
         # Only the first four elements need to be scaled
         bboxes_for_assigner[..., :4] *= stride_tensor
-        _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
+        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
             pred_scores.detach().sigmoid(),
-            bboxes_for_assigner.type(gt_bboxes.dtype),
+            bboxes_for_assigner.type(gt_bboxes_geom.dtype),
             anchor_points * stride_tensor,
             gt_labels,
-            gt_bboxes,
+            gt_bboxes_geom,
             mask_gt,
         )
-
         target_scores_sum = max(target_scores.sum(), 1)
 
+        batch_ind = torch.arange(batch_size, device=self.device)[:, None]
+        target_gt_idx_flat = target_gt_idx + batch_ind * gt_bboxes.shape[1]
+        target_bboxes_full = gt_bboxes.view(-1, gt_bboxes.shape[-1])[target_gt_idx_flat]
         # Cls loss
         # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
         loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
@@ -1078,9 +1086,10 @@ class v8OBBLoss(v8DetectionLoss):
                 stride_tensor,
             )
             weight = target_scores.sum(-1)[fg_mask]
+            pred_angle = preds["angle"].permute(0, 2, 1).contiguous()  # (bs, N, 1)
             loss[3] = self.calculate_angle_loss(
-                pred_bboxes, target_bboxes, fg_mask, weight, target_scores_sum
-            )  # angle loss
+                pred_angle, target_bboxes_full, fg_mask, weight, target_scores_sum
+            )
         else:
             loss[0] += (pred_angle * 0).sum()
 
@@ -1088,7 +1097,7 @@ class v8OBBLoss(v8DetectionLoss):
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
         loss[3] *= self.hyp.angle  # angle gain
-
+        
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl, angle)
 
     def bbox_decode(
@@ -1109,33 +1118,26 @@ class v8OBBLoss(v8DetectionLoss):
             pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
         return torch.cat((dist2rbox(pred_dist, pred_angle, anchor_points), pred_angle), dim=-1)
 
-    def calculate_angle_loss(self, pred_bboxes, target_bboxes, fg_mask, weight, target_scores_sum, lambda_val=3):
-        """Calculate oriented angle loss.
+    def calculate_angle_loss(self, pred_angle, target_bboxes, fg_mask, weight, target_scores_sum, lambda_val=3):
+        if fg_mask.sum() == 0:
+            return pred_angle.sum() * 0.0
 
-        Args:
-            pred_bboxes (torch.Tensor): Predicted bounding boxes with shape [N, 5] (x, y, w, h, theta).
-            target_bboxes (torch.Tensor): Target bounding boxes with shape [N, 5] (x, y, w, h, theta).
-            fg_mask (torch.Tensor): Foreground mask indicating valid predictions.
-            weight (torch.Tensor): Loss weights for each prediction.
-            target_scores_sum (torch.Tensor): Sum of target scores for normalization.
-            lambda_val (int): Controls the sensitivity to aspect ratio.
-
-        Returns:
-            (torch.Tensor): The calculated angle loss.
-        """
-        w_gt = target_bboxes[..., 2]
-        h_gt = target_bboxes[..., 3]
-        pred_theta = pred_bboxes[..., 4]
+        pred_theta = pred_angle.squeeze(-1)
         target_theta = target_bboxes[..., 4]
 
+        delta = torch.atan2(
+            torch.sin(pred_theta - target_theta),
+            torch.cos(pred_theta - target_theta),
+        )
+
+        ang_loss = 0.5 * delta[fg_mask].pow(2)
+
+        w_gt = target_bboxes[..., 2]
+        h_gt = target_bboxes[..., 3]
         log_ar = torch.log((w_gt + 1e-9) / (h_gt + 1e-9))
         scale_weight = torch.exp(-(log_ar**2) / (lambda_val**2))
 
-        delta_theta = pred_theta - target_theta
-        delta_theta_wrapped = delta_theta - torch.round(delta_theta / math.pi) * math.pi
-        ang_loss = torch.sin(2 * delta_theta_wrapped[fg_mask]) ** 2
-
-        ang_loss = scale_weight[fg_mask] * ang_loss
+        ang_loss = ang_loss * scale_weight[fg_mask]
         ang_loss = ang_loss * weight
 
         return ang_loss.sum() / target_scores_sum

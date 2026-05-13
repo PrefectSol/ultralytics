@@ -1,3 +1,11 @@
+```
+# Changes of the fork
+    - (14 may 2026) Global fixes. STABLE VERSION (fliplr & flipud WIP). Synced
+    - (19 feb 2026) Global sync to ultralytics 8.4.14 (UPDATE FOR YOLO26)
+    - (4 may 2025) Added support for yolo-obb angle in the range [0:360]
+    - (4 may 2025) Change augment images background to white (255, 255, 255)
+
+```
 <div align="center">
   <p>
     <a href="https://platform.ultralytics.com/?utm_source=github&utm_medium=referral&utm_campaign=platform_launch&utm_content=banner&utm_term=ultralytics_github" target="_blank">

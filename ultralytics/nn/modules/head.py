@@ -22,6 +22,12 @@ from .utils import bias_init_with_prob, linear_init
 
 __all__ = "OBB", "Classify", "Detect", "Pose", "RTDETRDecoder", "Segment", "YOLOEDetect", "YOLOESegment", "v10Detect"
 
+def canonicalize_geom_angle(theta: torch.Tensor) -> torch.Tensor:
+    """Map any angle to geometry-only interval [-pi/4, 3pi/4) with period pi."""
+    return theta - torch.floor((theta + math.pi / 4) / math.pi) * math.pi
+
+def wrap_full_angle(theta: torch.Tensor) -> torch.Tensor:
+    return torch.atan2(torch.sin(theta), torch.cos(theta))
 
 class Detect(nn.Module):
     """YOLO Detect head for object detection models.
@@ -511,37 +517,22 @@ class OBB(Detect):
 
 
 class OBB26(OBB):
-    """YOLO26 OBB detection head for detection with rotation models. This class extends the OBB head with modified angle
-    processing that outputs raw angle predictions without sigmoid transformation, compared to the original
-    OBB class.
-
-    Attributes:
-        ne (int): Number of extra parameters.
-        cv4 (nn.ModuleList): Convolution layers for angle prediction.
-        angle (torch.Tensor): Predicted rotation angles.
-
-    Methods:
-        forward_head: Concatenate and return predicted bounding boxes, class probabilities, and raw angles.
-
-    Examples:
-        Create an OBB26 detection head
-        >>> obb26 = OBB26(nc=80, ne=1, ch=(256, 512, 1024))
-        >>> x = [torch.randn(1, 256, 80, 80), torch.randn(1, 512, 40, 40), torch.randn(1, 1024, 20, 20)]
-        >>> outputs = obb26(x)
-    """
-
-    def forward_head(
-        self, x: list[torch.Tensor], box_head: torch.nn.Module, cls_head: torch.nn.Module, angle_head: torch.nn.Module
-    ) -> dict[str, torch.Tensor]:
-        """Concatenates and returns predicted bounding boxes, class probabilities, and raw angles."""
+    def forward_head(self, x, box_head, cls_head, angle_head):
         preds = Detect.forward_head(self, x, box_head, cls_head)
         if angle_head is not None:
-            bs = x[0].shape[0]  # batch size
+            bs = x[0].shape[0]
             angle = torch.cat(
                 [angle_head[i](x[i]).view(bs, self.ne, -1) for i in range(self.nl)], 2
-            )  # OBB theta logits (raw output without sigmoid transformation)
-            preds["angle"] = angle
+            )
+            preds["angle"] = angle  # raw full angle
         return preds
+
+    def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
+        angle_raw = x["angle"]
+        angle_full = torch.atan2(torch.sin(angle_raw), torch.cos(angle_raw))   # [-pi, pi]
+        self.angle = canonicalize_geom_angle(angle_raw)                        # geometry-only for box decode
+        preds = Detect._inference(self, x)
+        return torch.cat([preds, angle_full], dim=1)
 
 
 class Pose(Detect):
