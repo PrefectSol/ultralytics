@@ -339,8 +339,9 @@ class Instances:
             normalized=self.normalized,
         )
 
-    def flipud(self, h: int) -> None:
-        """Flip coordinates vertically.
+    def flipud(self, h):
+        """
+        Flip coordinates vertically.
 
         Args:
             h (int): Image height.
@@ -352,12 +353,20 @@ class Instances:
             self.bboxes[:, 3] = h - y1
         else:
             self.bboxes[:, 1] = h - self.bboxes[:, 1]
+
         self.segments[..., 1] = h - self.segments[..., 1]
+
+        # OBB: restore semantic/order convention after mirror
+        if self.segments is not None and len(self.segments) and self.segments.ndim == 3 and self.segments.shape[1] == 4:
+            self.segments = self.segments[:, [1, 0, 3, 2], :]
+
         if self.keypoints is not None:
             self.keypoints[..., 1] = h - self.keypoints[..., 1]
 
-    def fliplr(self, w: int) -> None:
-        """Flip coordinates horizontally.
+
+    def fliplr(self, w):
+        """
+        Flip coordinates horizontally.
 
         Args:
             w (int): Image width.
@@ -369,7 +378,13 @@ class Instances:
             self.bboxes[:, 2] = w - x1
         else:
             self.bboxes[:, 0] = w - self.bboxes[:, 0]
+
         self.segments[..., 0] = w - self.segments[..., 0]
+
+        # OBB: restore semantic/order convention after mirror
+        if self.segments is not None and len(self.segments) and self.segments.ndim == 3 and self.segments.shape[1] == 4:
+            self.segments = self.segments[:, [1, 0, 3, 2], :]
+
         if self.keypoints is not None:
             self.keypoints[..., 0] = w - self.keypoints[..., 0]
 

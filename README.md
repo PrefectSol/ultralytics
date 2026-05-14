@@ -1,5 +1,6 @@
 ```
 # Changes of the fork
+    - (15 may 2026) fix fliplr & flipud 
     - (14 may 2026) Global fixes. STABLE VERSION (fliplr & flipud WIP). Synced
     - (19 feb 2026) Global sync to ultralytics 8.4.14 (UPDATE FOR YOLO26)
     - (4 may 2025) Added support for yolo-obb angle in the range [0:360]
